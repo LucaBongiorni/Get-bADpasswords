@@ -64,13 +64,17 @@
   .NOTES
     Authored by    : Jakob H. Heidelberg / @JakobHeidelberg
     Date created   : 01/10-2015
-    Last modified  : 02/10-2015
+    Last modified  : 07/10-2015
 
     The very cool DSInternals module is authored by Michael Grafnetter - HUGE THANX to Michael for his great work and help! 
 
     Version history:
     - 1.00: Initial version (02/10-2015)
     - 1.01: Added help information on parameters, renamed booleans (02/10-2015)
+    - 1.02: Fixed error on empty lines in input files (word lists)
+            Exception calling "ContainsKey" with "1" argument(s): "Key cannot be null. Parameter name: key" [ArgumentNullException]
+    - 1.03: Default test for blank passwords, NT hash: 31d6cfe0d16ae931b73c59d7e0c089c0
+    - 1.04: Fixed error on null value for user passwords, e.g. PS> New-ADUser NullPwdUser1 -PasswordNotRequired $true -Enabled $true
 
     Tested on:
      - WS 2012 R2 with WMF 5.0 Production Preview (both from member-server and from DC)
@@ -134,7 +138,7 @@ Function Get-bADpasswords
     # ============ #
     # VARIABLES => #
     # ============ #
-    $ScriptVersion = "1.01"
+    $ScriptVersion = "1.04"
 
     # Set log/CSV file names with date/time
     $LogTimeStamp = Get-Date -Format ddMMyyyy-HHmmss
@@ -146,6 +150,10 @@ Function Get-bADpasswords
     $intBadPasswordsInLists = 0
     $intBadPasswordsInListsDuplicates = 0
     $intUsersAndHashesFromAD = 0
+    $intNullPasswordsFound = 0
+
+    # Constant
+    $strBlankPasswordNThash = '31d6cfe0d16ae931b73c59d7e0c089c0'
 
     # ============ #
     # FUNCTIONS => #
@@ -242,6 +250,11 @@ Function Get-bADpasswords
     If ($bolWriteToLogFile) {LogWrite -Logfile $LogFileName -LogEntryString "AD returned $intUsersAndHashesFromAD usernames and NT hashes!" -LogEntryType DATA -TimeStamp}
     Write-Verbose "AD returned $intUsersAndHashesFromAD usernames and NT hashes!"
 
+    # Add blank password NT hash to hashtable
+    If ($bolWriteToLogFile) {LogWrite -Logfile $LogFileName -LogEntryString "Adding blank password NT hash to hashtable..." -LogEntryType INFO -TimeStamp}
+    Write-Verbose "Adding blank password NT hash to hashtable..."
+    $htBadPasswords.Add($strBlankPasswordNThash,"")
+
     If ($bolWriteToLogFile) {LogWrite -Logfile $LogFileName -LogEntryString "Loading bad password word lists..." -LogEntryType INFO -TimeStamp}
     Write-Verbose "Loading bad password word lists..."
 
@@ -249,7 +262,7 @@ Function Get-bADpasswords
     Foreach ($WordlistPath in $arrBadPasswordFiles)
     {
         If ($bolWriteToLogFile -and $bolWriteVerboseInfoToLogfile) {LogWrite -Logfile $LogFileName -LogEntryString "| Checking word list: $WordlistPath" -LogEntryType INFO -TimeStamp}
-        Write-Verbose "|Checking word list: $WordlistPath"
+        Write-Verbose "| Checking word list: $WordlistPath"
 
         If (Test-Path $WordlistPath)
         {
@@ -257,23 +270,38 @@ Function Get-bADpasswords
             Write-Verbose "Word list file found: $WordlistPath"
         
             $BadPasswordList = Get-Content -Path $WordlistPath
+            $cnt_LineNumber = 1
 
             Foreach ($BadPassword in $BadPasswordList)
             {
+                
+                # Detect and ignore emty strings
+                If ($BadPassword -eq '')
+                {
+                    If ($bolWriteToLogFile) {LogWrite -Logfile $LogFileName -LogEntryString "| Empty input line ignored (line#: $cnt_LineNumber)." -LogEntryType INFO -TimeStamp}
+                    Write-Verbose "| Empty input line ignored (line#: $cnt_LineNumber)."
+                    $cnt_LineNumber++
+                    Continue
+                }
+
                 $NTHash = $(Get-NTHashFromClearText $BadPassword)
 
                 If ($htBadPasswords.ContainsKey($NTHash))
                 {
                     $intBadPasswordsInListsDuplicates++
-                    If ($bolWriteToLogFile -and $bolWriteVerboseInfoToLogfile) {LogWrite -Logfile $LogFileName -LogEntryString "| Duplicate password: $BadPassword = $NTHash" -LogEntryType INFO -TimeStamp}
-                    Write-Verbose "| Duplicate password: $BadPassword = $NTHash"
+                    If ($bolWriteToLogFile -and $bolWriteVerboseInfoToLogfile) {LogWrite -Logfile $LogFileName -LogEntryString "| Duplicate password: '$BadPassword' = $NTHash" -LogEntryType INFO -TimeStamp}
+                    Write-Verbose "| Duplicate password: '$BadPassword' = $NTHash (line#: $cnt_LineNumber)"
                 }
                 Else # New password to put into hash table
                 {
-                    If ($bolWriteToLogFile -and $bolWriteVerboseInfoToLogfile) {LogWrite -Logfile $LogFileName -LogEntryString "| Adding to hashtable: $BadPassword = $NTHash" -LogEntryType INFO -TimeStamp}
-                    Write-Verbose "| Adding to hashtable: $BadPassword = $NTHash"
+                    If ($bolWriteToLogFile -and $bolWriteVerboseInfoToLogfile) {LogWrite -Logfile $LogFileName -LogEntryString "| Adding to hashtable: '$BadPassword' = $NTHash" -LogEntryType INFO -TimeStamp}
+                    Write-Verbose "| Adding to hashtable: '$BadPassword' = $NTHash (line#: $cnt_LineNumber)"
                     $htBadPasswords.Add($NTHash,$BadPassword)
                 }
+
+                # Counting line numbers
+                $cnt_LineNumber++
+
             } # Foreach BadPassword
 
         }
@@ -285,7 +313,7 @@ Function Get-bADpasswords
 
     } # Foreach BadPassword file
 
-    $intBadPasswordsInLists = $htBadPasswords.Count
+    $intBadPasswordsInLists = $htBadPasswords.Count - 1 # Count minus 1 because: blank password NT hash added by default, not from lists...
 
     # We can only continue, if we got weak passwords from word lists
     If ($intBadPasswordsInLists -lt 1)
@@ -307,8 +335,15 @@ Function Get-bADpasswords
         $strUserSamAccountName = $objUser.SamAccountName
         $strUserNTHashHex = $objUser.NTHashHex
 
-        If ($bolWriteToLogFile -and $bolWriteVerboseInfoToLogfile) {LogWrite -Logfile $LogFileName -LogEntryString "| Checking password hash of user: $strUserSamAccountName" -LogEntryType INFO -TimeStamp}
-        Write-Verbose "| Checking password hash of user: $strUserSamAccountName"
+        If ($strUserNTHashHex -eq $null)
+        {
+            If ($bolWriteToLogFile -and $bolWriteVerboseInfoToLogfile) {LogWrite -Logfile $LogFileName -LogEntryString "Null password found for user: $strUserSamAccountName" -LogEntryType INFO -TimeStamp}
+            Write-Verbose "Null password found for user: $strUserSamAccountName"
+            $intNullPasswordsFound++
+            Continue
+        }
+        If ($bolWriteToLogFile -and $bolWriteVerboseInfoToLogfile) {LogWrite -Logfile $LogFileName -LogEntryString "| Checking password hash of user: $strUserSamAccountName = $strUserNTHashHex" -LogEntryType INFO -TimeStamp}
+        Write-Verbose "| Checking password hash of user: $strUserSamAccountName = $strUserNTHashHex"
     
         If ($htBadPasswords.ContainsKey($strUserNTHashHex))
         {
@@ -316,10 +351,10 @@ Function Get-bADpasswords
             $strUserBadPasswordClearText = $htBadPasswords.Get_Item($strUserNTHashHex)
             If ($bolWriteToLogFile)
             {
-                If ($bolWriteClearTextPasswordsToLogFile){LogWrite -Logfile $LogFileName -LogEntryString "Weak password found for user: $strUserSamAccountName = $strUserBadPasswordClearText" -LogEntryType INFO -TimeStamp}
+                If ($bolWriteClearTextPasswordsToLogFile){LogWrite -Logfile $LogFileName -LogEntryString "Weak password found for user: $strUserSamAccountName = '$strUserBadPasswordClearText'" -LogEntryType INFO -TimeStamp}
                 Else {LogWrite -Logfile $LogFileName -LogEntryString "Weak password found for user: $strUserSamAccountName" -LogEntryType INFO -TimeStamp}
             }
-            Write-Verbose "Weak password found for user: $strUserSamAccountName = $strUserBadPasswordClearText"
+            Write-Verbose "Weak password found for user: $strUserSamAccountName = '$strUserBadPasswordClearText'"
 
             # Handle CSV fil output
             If ($bolWriteToCsvFile)
@@ -335,8 +370,12 @@ Function Get-bADpasswords
     }
 
     # Give status on found weak passwords
-    If ($bolWriteToLogFile) {LogWrite -Logfile $LogFileName -LogEntryString "Found $intBadPasswordsFound weak passwords!" -LogEntryType DATA -TimeStamp}
-    Write-Verbose "Found $intBadPasswordsFound weak passwords!"
+    If ($bolWriteToLogFile) {LogWrite -Logfile $LogFileName -LogEntryString "Found $intBadPasswordsFound user(s) with weak password!" -LogEntryType DATA -TimeStamp}
+    Write-Verbose "Found $intBadPasswordsFound user(s) with weak password!"
+
+    # Give status on found $null passwords
+    If ($bolWriteToLogFile) {LogWrite -Logfile $LogFileName -LogEntryString "Found $intNullPasswordsFound user(s) with null password!" -LogEntryType DATA -TimeStamp}
+    Write-Verbose "Found $intNullPasswordsFound user(s) with null password!"
 
     # Let's exit gracefully
     GetOut
