@@ -75,7 +75,7 @@
             Exception calling "ContainsKey" with "1" argument(s): "Key cannot be null. Parameter name: key" [ArgumentNullException]
     - 1.03: Default test for blank passwords, NT hash: 31d6cfe0d16ae931b73c59d7e0c089c0
     - 1.04: Fixed error on null value for user passwords, e.g. PS> New-ADUser NullPwdUser1 -PasswordNotRequired $true -Enabled $true
-    - 1.05: Added comments on hashtable $htBadPasswords - not case-sensitive on purpose (AAD3B435B51404EEAAD3B435B51404EE == aad3B435b51404eeaad3B435B51404ee)
+    - 1.05: Added comments on hashtable $htBadPasswords - case-insensitive on purpose (AAD3B435B51404EEAAD3B435B51404EE == aad3B435b51404eeaad3B435B51404ee)
     
     Tested on:
      - WS 2012 R2 with WMF 5.0 Production Preview (both from member-server and from DC)
@@ -214,7 +214,7 @@ Function Get-bADpasswords
     If ($bolWriteToLogFile -and $bolWriteVerboseInfoToLogfile) {LogWrite -Logfile $LogFileName -LogEntryString "| Logfile: $LogFileName" -LogEntryType INFO -TimeStamp}
     If ($bolWriteToLogFile -and $bolWriteVerboseInfoToLogfile) {LogWrite -Logfile $LogFileName -LogEntryString "| CSVfile: $CsvFileName" -LogEntryType INFO -TimeStamp}
 
-    # Create empty hash table for bad/weak passwords (not case-sensitive on purpose)
+    # Create empty hash table for bad/weak passwords (case-insensitive on purpose)
     $htBadPasswords = @{}
 
     # Populate array with usernames and NT hash values for enabled users only
@@ -287,7 +287,7 @@ Function Get-bADpasswords
 
                 $NTHash = $(Get-NTHashFromClearText $BadPassword)
 
-                If ($htBadPasswords.ContainsKey($NTHash)) # NB! Not case-sensitive on purpose
+                If ($htBadPasswords.ContainsKey($NTHash)) # NB! Case-insensitive on purpose
                 {
                     $intBadPasswordsInListsDuplicates++
                     If ($bolWriteToLogFile -and $bolWriteVerboseInfoToLogfile) {LogWrite -Logfile $LogFileName -LogEntryString "| Duplicate password: '$BadPassword' = $NTHash" -LogEntryType INFO -TimeStamp}
@@ -346,7 +346,7 @@ Function Get-bADpasswords
         If ($bolWriteToLogFile -and $bolWriteVerboseInfoToLogfile) {LogWrite -Logfile $LogFileName -LogEntryString "| Checking password hash of user: $strUserSamAccountName = $strUserNTHashHex" -LogEntryType INFO -TimeStamp}
         Write-Verbose "| Checking password hash of user: $strUserSamAccountName = $strUserNTHashHex"
     
-        If ($htBadPasswords.ContainsKey($strUserNTHashHex)) # NB! Not case-sensitive on purpose
+        If ($htBadPasswords.ContainsKey($strUserNTHashHex)) # NB! Case-insensitive on purpose
         {
             $intBadPasswordsFound++
             $strUserBadPasswordClearText = $htBadPasswords.Get_Item($strUserNTHashHex)
